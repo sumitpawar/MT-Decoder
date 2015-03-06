@@ -9,14 +9,23 @@ package org.jhu.mt.decoder;
  */
 public class TranslatedSentences {
 	
-	// best translated sentence
+	// best translated sentence - hypotheses
 	private String translatedSentence;
 	
-	// final language model probability
+	// language model probability
 	private double lmprob;
 	
-	// final translation model probability
+	// translation model probability
 	private double tmprob;
+	
+	// start of sequence words
+	private int s;
+	
+	// end of sequence of words
+	private int t;
+	
+	// bit set
+	private int[] b;
 
 	/**
 	 * @return the translatedSentence
@@ -58,6 +67,48 @@ public class TranslatedSentences {
 	 */
 	public void setTmprob(double tmprob) {
 		this.tmprob = tmprob;
+	}
+
+	/**
+	 * @return the s
+	 */
+	public int getS() {
+		return s;
+	}
+
+	/**
+	 * @param s the s to set
+	 */
+	public void setS(int s) {
+		this.s = s;
+	}
+
+	/**
+	 * @return the t
+	 */
+	public int getT() {
+		return t;
+	}
+
+	/**
+	 * @param t the t to set
+	 */
+	public void setT(int t) {
+		this.t = t;
+	}
+
+	/**
+	 * @return the b
+	 */
+	public int[] getB() {
+		return b;
+	}
+
+	/**
+	 * @param b the b to set
+	 */
+	public void setB(int[] b) {
+		this.b = b;
 	}
 	
 	

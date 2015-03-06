@@ -10,9 +10,11 @@ import java.io.FileNotFoundException;
 import java.io.FileReader;
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.PriorityQueue;
 
 /**
  * @author sumit
@@ -26,16 +28,29 @@ public class StackDecoder {
 	private final String lmFile = "./data/lm";
 	// Input file
 	private final String inputFile = "./data/input";
+	// max sentences to consider before pruning
+	private final int s = 100;
 	
 	// Input String list
 	private List<String> input = new ArrayList<String>();
 	// translation model map
-	private Map<String, TranslationWordProbability> tmMap = new HashMap<String, TranslationWordProbability>();
+	private Map<String, List<TranslationWordProbability>> tmMap = new HashMap<String, List<TranslationWordProbability>>();
 	// language model map
 	private Map<String, LanguageWordProbability> lmMap = new HashMap<String, LanguageWordProbability>();
 	// list of translated sentences
 	private List<TranslatedSentences> translatedSentences = new ArrayList<TranslatedSentences>();
 	
+	// Stack: priority queue
+	private PriorityQueue<TranslatedSentences> stack = 
+			new PriorityQueue<TranslatedSentences>(s, new Comparator<TranslatedSentences>() {
+				@Override
+				public int compare(TranslatedSentences ts1,
+						TranslatedSentences ts2) {
+					Double ls1prob = ts1.getLmprob() + ts1.getTmprob();
+					Double ls2prob = ts2.getLmprob() + ts2.getTmprob();
+					return (ls1prob.compareTo(ls2prob) * (-1));
+				}
+			});
 	
 	/**
 	 * @return the input
@@ -54,14 +69,14 @@ public class StackDecoder {
 	/**
 	 * @return the tmMap
 	 */
-	public Map<String, TranslationWordProbability> getTmMap() {
+	public Map<String, List<TranslationWordProbability>> getTmMap() {
 		return tmMap;
 	}
 
 	/**
 	 * @param tmMap the tmMap to set
 	 */
-	public void setTmMap(Map<String, TranslationWordProbability> tmMap) {
+	public void setTmMap(Map<String, List<TranslationWordProbability>> tmMap) {
 		this.tmMap = tmMap;
 	}
 
@@ -99,16 +114,27 @@ public class StackDecoder {
 			BufferedReader br = new BufferedReader(new FileReader(lmFile));
 			String line = null;
 			while ((line = br.readLine()) != null) {
-				String[] lmLine = line.trim().split("\\s+\\|\\|\\|\\s+");
+				if(line.startsWith("\\") 
+						|| line.startsWith("ngram") || line.trim().isEmpty()) {
+					continue;
+				}
+				String[] lmLine = line.trim().split("\\s+");
 				LanguageWordProbability lmwp = new LanguageWordProbability();
 				String key = lmLine[1];
-				lmwp.setWord(key);
 				lmwp.setWordProbability(Double.parseDouble(lmLine[0]));
-				if(lmLine.length == 3) {
-					lmwp.setBackoffProbability(Double.parseDouble(lmLine[2]));
+				if(lmLine.length >= 3) {
+					int j = lmLine.length - 1;
+					if(lmLine[j].matches("\\-\\d+\\.\\d+")) {
+						lmwp.setBackoffProbability(Double.parseDouble(lmLine[j]));
+						j--;
+					}
+					for(int i = 2; i <= j; i++) {
+						key += " " + lmLine[2];
+					}
 				} else {
 					lmwp.setBackoffProbability(1.0); // for trigram models
 				}
+				lmwp.setWord(key);
 				lmMap.put(key, lmwp);
 			}
 			br.close();
@@ -125,7 +151,7 @@ public class StackDecoder {
 	}
 	
 	private void loadTranslationModel() {
-		tmMap = new HashMap<String, TranslationWordProbability>();
+		tmMap = new HashMap<String, List<TranslationWordProbability>>();
 		try {
 			BufferedReader br = new BufferedReader(new FileReader(tmFile));
 			String line = null;
@@ -133,10 +159,15 @@ public class StackDecoder {
 				String[] tmLine = line.trim().split("\\s+\\|\\|\\|\\s+");
 				TranslationWordProbability tmwp = new TranslationWordProbability();
 				String key = tmLine[0];
-				tmwp.setForeignWord(key);
+				//tmwp.setForeignWord(key);
 				tmwp.setTargetWord(tmLine[1]);
 				tmwp.setTranslationProbability(Double.parseDouble(tmLine[2]));
-				tmMap.put(key, tmwp);
+				List<TranslationWordProbability> list = new ArrayList<TranslationWordProbability>();
+				if(tmMap.containsKey(key)) {
+					list = tmMap.get(key);
+				}
+				list.add(tmwp);
+				tmMap.put(key, list);
 			}
 			br.close();
 		} catch (FileNotFoundException e) {
@@ -171,13 +202,199 @@ public class StackDecoder {
 		}
 	}
 	
+	private double logadd10(double x, double y) {
+		double logsum = 0.0;
+		if(x >= y) {
+			logsum = x + Math.log10(1 + Math.exp((y-x)));
+		} else {
+			logsum = y + Math.log10(1 + Math.exp((x-y)));
+		}
+		return logsum;
+	}
+	
 	private void decode() {
-		for(int i = 0 ; i < input.size(); i++) {
+		for(int i = 0 ; i < input.size(); i++) { 										// for each sentence
 			String[] sen = input.get(i).split("\\s+");
-			for(int j = 0 ; j < sen.length ; j++) {
-				
+			Map<Integer, List<TranslatedSentences>> senMap = 									// hold map of possible English translations
+										new HashMap<Integer, List<TranslatedSentences>>();		// for each French word
+			for(int j = 0; j < sen.length; j++) {
+				List<TranslatedSentences> tsList = new ArrayList<TranslatedSentences>();
+				String word = sen[j];
+				if(tmMap.containsKey(word)) {
+					List<TranslationWordProbability> trList = tmMap.get(word);
+					for(int k = 0; k < trList.size(); k++) {
+						TranslationWordProbability twp = trList.get(k);
+						String tw = twp.getTargetWord();
+						TranslatedSentences ts = new TranslatedSentences();
+						ts.setS(j);
+						ts.setT(j+1);
+						ts.setTranslatedSentence(tw);
+						ts.setTmprob(twp.getTranslationProbability());
+						int[] b = new int[sen.length];
+						b[j] = 1;
+						ts.setB(b);
+						if(lmMap.containsKey(tw)) {
+							ts.setLmprob(lmMap.get(tw).getWordProbability());
+						}
+						tsList.add(ts);
+						
+						String firstphr = "<s> " + tw;
+						if(lmMap.containsKey(firstphr)) {
+							LanguageWordProbability lwp = lmMap.get(firstphr);
+							TranslatedSentences ts2 = new TranslatedSentences();
+							ts2.setS(j);
+							ts2.setT(j+1);
+							ts2.setLmprob(lwp.getWordProbability() 
+									+ lmMap.get(tw).getWordProbability() 
+									+ lmMap.get(tw).getBackoffProbability());
+							ts2.setTmprob(twp.getTranslationProbability());
+							ts2.setTranslatedSentence(firstphr);
+							ts2.setB(b);
+							stack.add(ts2);
+						}
+					}
+				}else {
+					TranslatedSentences ts = new TranslatedSentences();
+					ts.setS(j);
+					ts.setT(j+1);
+					ts.setTmprob(0.0);
+					ts.setTranslatedSentence(word);
+					if(lmMap.containsKey(word)) {
+						ts.setLmprob(lmMap.get(word).getWordProbability());
+					} else {
+						ts.setLmprob(0.0);
+					}
+					int[] b = new int[sen.length];
+					b[j] = 1;
+					ts.setB(b);
+					tsList.add(ts);
+					
+					String firstphr = "<s> " + word;
+					if(lmMap.containsKey(firstphr)) {
+						LanguageWordProbability lwp = lmMap.get(firstphr);
+						TranslatedSentences ts2 = new TranslatedSentences();
+						ts2.setS(j);
+						ts2.setT(j+1);
+						ts2.setLmprob(lwp.getWordProbability());
+						ts2.setTmprob(0.0);
+						ts2.setTranslatedSentence(firstphr);
+						ts2.setB(b);
+						stack.add(ts2);
+					}else {
+						TranslatedSentences ts2 = new TranslatedSentences();
+						ts2.setS(j);
+						ts2.setT(j+1);
+						ts2.setLmprob(0.0);
+						ts2.setTmprob(0.0);
+						ts2.setTranslatedSentence(firstphr);
+						ts2.setB(b);
+						stack.add(ts2);
+					}
+				}
+				senMap.put((j+1), tsList);
+			}
+			
+			// run until we get the best complete translation
+			for(int k = 1; k < sen.length; k++) {
+				int limit = s;
+				if(stack.size() < s) {
+					limit = stack.size();
+				}
+				List<TranslatedSentences> trsentences = new ArrayList<TranslatedSentences>();
+				for(int j =0; j < limit ; j++) {
+					trsentences.add(stack.poll());
+				}
+				stack.clear();
+				for(int j = 0; j < limit ; j++) {
+					TranslatedSentences ts = trsentences.get(j);
+					for(int l = 0; l < sen.length; l++) {
+						if (ts.getB()[l] == 0) {
+							for(TranslatedSentences t : senMap.get(l+1)) {
+								String snt = ts.getTranslatedSentence();
+								snt += " " + t.getTranslatedSentence();
+								String[] sntnce = snt.split("\\s+");
+								double lmp = ts.getLmprob();
+								if(sntnce.length == 2) {
+									if(lmMap.containsKey("<s> " + snt)) {
+										String t1 = "<s> " + snt;
+										lmp += 	lmMap.get(t1).getBackoffProbability() 
+												+ lmMap.get(t1).getWordProbability();
+									}
+									if(lmMap.containsKey(snt)) {
+										lmp += 	lmMap.get(snt).getBackoffProbability() 
+												+ lmMap.get(snt).getWordProbability();
+									}
+									lmp += lmMap.get(t.getTranslatedSentence()).getWordProbability()
+											+ lmMap.get(t.getTranslatedSentence()).getBackoffProbability();
+								}else if(sntnce.length > 2) {
+									String t2 = sntnce[sntnce.length - 2] + " " 
+											+ sntnce[sntnce.length - 1];
+									String t1 = sntnce[sntnce.length - 3] + " " + t2;
+									if(lmMap.containsKey(t1)) {
+										lmp += 	lmMap.get(t1).getBackoffProbability() 
+												+ lmMap.get(t1).getWordProbability();
+									}
+									if(lmMap.containsKey(t2)) {
+										lmp += 	lmMap.get(t2).getBackoffProbability() 
+												+ lmMap.get(t2).getWordProbability();
+									}
+									lmp += lmMap.get(sntnce[sntnce.length - 3]).getWordProbability()
+											+ lmMap.get(sntnce[sntnce.length - 3]).getBackoffProbability();
+								}else {
+									System.err.println("Error!!! : invalid sentence: " + sntnce);
+								}
+								ts.setLmprob(lmp);
+								ts.setTmprob(ts.getTmprob() + t.getTmprob());
+								int[] b1 = ts.getB();
+								b1[l] = 1;
+								ts.setB(b1);
+								ts.setTranslatedSentence(snt);
+								stack.add(ts);
+							}
+						}
+					}
+				}
+			}
+			
+			// Consider last sequence w_{n-1} w_{n} </s>
+			{
+				int limit = s;
+				if(stack.size() < s) {
+					limit = stack.size();
+				}
+				List<TranslatedSentences> trsentences = new ArrayList<TranslatedSentences>();
+				for(int j =0; j < limit ; j++) {
+					trsentences.add(stack.poll());
+				}
+				stack.clear();
+				for(int j = 0; j < limit ; j++) {
+					TranslatedSentences ts = trsentences.get(j);
+					String snt = ts.getTranslatedSentence();
+					snt += " </s>";
+					String[] sntnce = snt.split("\\s+");
+					double lmp = ts.getLmprob();
+					String t2 = sntnce[sntnce.length - 2] + " " 
+							+ sntnce[sntnce.length - 1];
+					String t1 = sntnce[sntnce.length - 3] + " " + t2;
+					if(lmMap.containsKey(t1)) {
+						lmp += 	lmMap.get(t1).getBackoffProbability() 
+								+ lmMap.get(t1).getWordProbability();
+					}
+					if(lmMap.containsKey(t2)) {
+						lmp += 	lmMap.get(t2).getBackoffProbability() 
+								+ lmMap.get(t2).getWordProbability();
+					}
+					lmp += lmMap.get("</s>").getWordProbability();
+					ts.setLmprob(lmp);
+					stack.add(ts);
+				}
 			}
 		}
+		TranslatedSentences ts = stack.poll();
+		System.out.println("sentence: " + ts.getTranslatedSentence() 
+				+ " #### tmprob: " + ts.getTmprob()
+				+ " #### lmbrob: " + ts.getLmprob()
+				+ " #### bitmap: " + ts.getB().toString());
 	}
 	
 	private void decodeSentences() {

@@ -10,7 +10,7 @@ package org.jhu.mt.decoder;
 public class TranslationWordProbability {
 
 	// Foreign language (french) word
-	private String foreignWord;
+	//private String foreignWord;
 	
 	// Target language (English) word
 	private String targetWord;
@@ -21,16 +21,16 @@ public class TranslationWordProbability {
 	/**
 	 * @return the foreignWord
 	 */
-	public String getForeignWord() {
+	/*public String getForeignWord() {
 		return foreignWord;
-	}
+	}*/
 
 	/**
 	 * @param foreignWord the foreignWord to set
 	 */
-	public void setForeignWord(String foreignWord) {
+	/*public void setForeignWord(String foreignWord) {
 		this.foreignWord = foreignWord;
-	}
+	}*/
 
 	/**
 	 * @return the targetWord
