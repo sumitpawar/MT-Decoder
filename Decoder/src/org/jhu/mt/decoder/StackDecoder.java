@@ -29,7 +29,7 @@ public class StackDecoder {
 	// Input file
 	private final String inputFile = "./data/input";
 	// max sentences to consider before pruning
-	private final int s = 100;
+	private final int s = 10000;
 	
 	// Input String list
 	private List<String> input = new ArrayList<String>();
@@ -129,10 +129,10 @@ public class StackDecoder {
 						j--;
 					}
 					for(int i = 2; i <= j; i++) {
-						key += " " + lmLine[2];
+						key += " " + lmLine[i];
 					}
 				} else {
-					lmwp.setBackoffProbability(1.0); // for trigram models
+					lmwp.setBackoffProbability(0.0); // for trigram models
 				}
 				lmwp.setWord(key);
 				lmMap.put(key, lmwp);
@@ -338,18 +338,25 @@ public class StackDecoder {
 										lmp += 	lmMap.get(t2).getBackoffProbability() 
 												+ lmMap.get(t2).getWordProbability();
 									}
-									lmp += lmMap.get(sntnce[sntnce.length - 3]).getWordProbability()
-											+ lmMap.get(sntnce[sntnce.length - 3]).getBackoffProbability();
+									if(lmMap.containsKey(t.getTranslatedSentence())) {
+										lmp += lmMap.get(t.getTranslatedSentence()).getWordProbability()
+											+ lmMap.get(t.getTranslatedSentence()).getBackoffProbability();
+									}
 								}else {
 									System.err.println("Error!!! : invalid sentence: " + sntnce);
 								}
-								ts.setLmprob(lmp);
-								ts.setTmprob(ts.getTmprob() + t.getTmprob());
-								int[] b1 = ts.getB();
+								TranslatedSentences ts2 = new TranslatedSentences();
+								ts2.setLmprob(lmp);
+								ts2.setTmprob(ts.getTmprob() + t.getTmprob());
+								int[] b1 = new int[sen.length];
+								for(int m =0 ; m< sen.length; m++) {
+									b1[m] = ts.getB()[m];
+								}
 								b1[l] = 1;
-								ts.setB(b1);
-								ts.setTranslatedSentence(snt);
-								stack.add(ts);
+								ts2.setB(b1);
+								snt = snt.substring(snt.indexOf(' '), snt.length()); // remove the BOS: <s>
+								ts2.setTranslatedSentence(snt);
+								stack.add(ts2);
 							}
 						}
 					}
@@ -389,12 +396,14 @@ public class StackDecoder {
 					stack.add(ts);
 				}
 			}
+			TranslatedSentences ts = stack.poll();
+			/*System.out.println("sentence: " + ts.getTranslatedSentence() 
+					+ " #### tmprob: " + ts.getTmprob()
+					+ " #### lmbrob: " + ts.getLmprob()
+					+ " #### bitmap: " + ts.getB().toString());*/
+			System.out.println(ts.getTranslatedSentence());
+			stack.clear();
 		}
-		TranslatedSentences ts = stack.poll();
-		System.out.println("sentence: " + ts.getTranslatedSentence() 
-				+ " #### tmprob: " + ts.getTmprob()
-				+ " #### lmbrob: " + ts.getLmprob()
-				+ " #### bitmap: " + ts.getB().toString());
 	}
 	
 	private void decodeSentences() {
